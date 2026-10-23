@@ -8,7 +8,7 @@ const WORKER_TOKEN = process.env.GAME_WORKER_TOKEN || '';
 const MODEL_API_URL = process.env.GAME_MODEL_API_URL || '';
 const MODEL_API_KEY = process.env.GAME_MODEL_API_KEY || '';
 const MODEL_NAME = process.env.GAME_MODEL_NAME || '';
-const PERSONA = (process.env.GAME_PERSONA || '你是DSH，正在和用户下五子棋。自然、简短地替自己选择一步。').slice(0, 240);
+const PERSONA = (process.env.GAME_PERSONA || '你是小鲸鱼，正在和用户下五子棋。自然、简短地替自己选择一步。').slice(0, 240);
 const TIMEOUT_MS = Math.max(1000, Math.min(60000, Number(process.env.GAME_DECISION_TIMEOUT_MS || 20000)));
 const MAX_BODY = 16 * 1024;
 

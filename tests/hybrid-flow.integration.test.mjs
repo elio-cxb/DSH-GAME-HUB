@@ -36,18 +36,26 @@ test('hybrid Gomoku sends a short bridge callback, accepts a legal DSH move, and
   const port = await reservePort();
   const gameId = '33333333-3333-4333-8333-333333333333';
   const seatToken = 'human-seat-token-for-hybrid-integration-test';
+  const spectatorToken = 'spectator-token-for-hybrid-integration-test';
   const bridgeSecret = 'hybrid-bridge-test-secret-'.padEnd(40, 'z');
   const base = `http://127.0.0.1:${port}`;
   const store = new GameStore(join(dataDir, 'games.sqlite'));
   const seed = createGameState(gameId, 'hybrid', true);
   const board = Array(225).fill(0);
   for (let col = 4; col <= 7; col++) board[7 * 15 + col] = seed.stones.companion;
-  store.createGame({ ...seed, board }, seatToken);
+  store.createGame({ ...seed, board }, seatToken, spectatorToken);
   store.close();
 
   const bridge = createServer(async (req, res) => {
     const body = await readJson(req);
     assert.equal(req.headers['x-game-token'], bridgeSecret);
+    if (req.url === '/internal/game/record') {
+      assert.ok(Array.isArray(body.moves));
+      assert.ok(body.moves.every((move) => Number.isSafeInteger(move.moveNumber) && Number.isSafeInteger(move.seatMoveIndex)));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
     assert.equal(req.url, '/internal/game/turn');
     assert.deepEqual(Object.keys(body).sort(), ['gameId', 'gameType']);
     assert.equal(body.gameId, gameId);
@@ -55,7 +63,7 @@ test('hybrid Gomoku sends a short bridge callback, accepts a legal DSH move, and
     const view = await fetch(base + '/internal/game/view', { method: 'POST', headers: { 'content-type': 'application/json', 'x-game-token': bridgeSecret }, body: JSON.stringify({ gameId }) }).then((r) => r.json());
     const winning = view.candidates.find((candidate) => candidate.row === 7 && (candidate.col === 3 || candidate.col === 8));
     assert.ok(winning, 'bridge gets server-selected legal candidates');
-    const playBody = { gameId, requestId: 'dsh_move_request_0001', expectedVersion: view.version, actionId: winning.actionId };
+    const playBody = { gameId, requestId: 'dsh_move_request_0001', decisionId: view.decisionId, expectedVersion: view.version, controller: view.controller, wakeDeliveredAt: view.wakeDeliveredAt, row: winning.row, col: winning.col, thoughtCard: '优先直接连成五；若本手结束对局则按结果复盘。', ropeHands: 2 };
     const played = await fetch(base + '/internal/game/play', { method: 'POST', headers: { 'content-type': 'application/json', 'x-game-token': bridgeSecret }, body: JSON.stringify(playBody) });
     assert.equal(played.status, 200);
     const replay = await fetch(base + '/internal/game/play', { method: 'POST', headers: { 'content-type': 'application/json', 'x-game-token': bridgeSecret }, body: JSON.stringify(playBody) }).then((r) => r.json());
@@ -91,6 +99,7 @@ test('hybrid Gomoku sends a short bridge callback, accepts a legal DSH move, and
   }
   const dshMove = finished.observation.history.find((move) => move.source === 'dsh');
   assert.ok(dshMove, 'DSH move is persisted');
+  assert.equal(dshMove.ownMoveIndex, 1, 'companion hand count is separate from global moveNumber');
   assert.equal(dshMove.row, 7);
   assert.ok([3, 8].includes(dshMove.col));
   const usage = await (await fetch(base + `/api/games/${gameId}/usage`, { headers: { authorization: `Bearer ${seatToken}` } })).json();

@@ -1,27 +1,49 @@
 export const BOARD_SIZE = 15;
 export type Stone = 0 | 1 | 2;
 export type SeatId = 'human' | 'companion';
-export type DecisionSource = 'human' | 'local' | 'mock' | 'dsh' | 'fallback' | 'forced';
+export type DecisionSource = 'human' | 'local' | 'mock' | 'dsh' | 'fish' | 'fallback' | 'forced';
 export type CompanionMode = 'local' | 'mock' | 'hybrid';
+export type DecisionMode = 'dsh-session' | 'dsh-subagent' | 'dsh-dual' | 'local';
+export type GameOpponent = 'human' | 'local';
+export type DecisionController = 'body' | 'fish' | 'engine';
 
 export interface Position { row: number; col: number }
 export interface MoveRecord extends Position {
   seatId: SeatId;
   stone: 1 | 2;
   source: DecisionSource;
+  controller?: DecisionController | 'human';
+  seatMoveIndex?: number;
+  ownMoveIndex?: number;
+  engineSuggestion?: { row: number; col: number; score: number } | null;
+  thoughtCardVersion?: number | null;
+  deviationReport?: string | null;
+  note?: string | null;
+  wakeDeliveredAt?: string;
+  budgetMs?: number | null;
+  extended?: boolean;
   version: number;
   at: string;
 }
 export interface GomokuState {
   gameId: string;
   mode: CompanionMode;
+  decisionMode: DecisionMode;
+  opponent: GameOpponent;
   humanFirst: boolean;
   modelAttempts: number;
-  pendingDecision: { taskId: string; version: number; reason: string } | null;
+  lastDshWakeAtCompanionMove: number | null;
+  pendingDecision: { taskId: string; version: number; reason: string; controller: DecisionController; wakeDeliveredAt: string; budgetMs: number; extended: boolean; engineSuggestion?: { row: number; col: number; score: number } | null } | null;
+  thoughtCard: { text: string; version: number; ropeHands: number | null; wakeAtOwnMove: number | null; wakePatterns: string[] } | null;
+  lastBodyMoveIndex: number;
+  fishWakeProposals: number;
+  proposalReports: Array<{ ownMoveIndex: number; reason: string; accepted: boolean; at: string }>;
+  pendingWakeReason: string | null;
+  extensionUsed: boolean;
   stones: { human: 1 | 2; companion: 1 | 2 };
   board: Stone[];
   version: number;
-  status: 'playing' | 'finished';
+  status: 'playing' | 'finished' | 'abandoned';
   nextSeat: SeatId | null;
   winner: SeatId | null;
   draw: boolean;
@@ -40,14 +62,23 @@ export class RuleError extends Error {
   }
 }
 
-export function createGameState(gameId: string, mode: CompanionMode, humanFirst = true): GomokuState {
+export function createGameState(gameId: string, mode: CompanionMode, humanFirst = true, options: { decisionMode?: DecisionMode; opponent?: GameOpponent } = {}): GomokuState {
   const now = new Date().toISOString();
   return {
     gameId,
     mode,
+    decisionMode: options.decisionMode || (mode === 'hybrid' ? 'dsh-session' : 'local'),
+    opponent: options.opponent || 'human',
     humanFirst,
     modelAttempts: 0,
+    lastDshWakeAtCompanionMove: null,
     pendingDecision: null,
+    thoughtCard: null,
+    lastBodyMoveIndex: 0,
+    fishWakeProposals: 0,
+    proposalReports: [],
+    pendingWakeReason: null,
+    extensionUsed: false,
     stones: humanFirst ? { human: 1, companion: 2 } : { human: 2, companion: 1 },
     board: Array.from({ length: BOARD_SIZE * BOARD_SIZE }, () => 0 as Stone),
     version: 0,
@@ -95,7 +126,7 @@ export function hasFive(board: Stone[], row: number, col: number, stone: Stone):
   );
 }
 
-export function applyMove(state: GomokuState, seatId: SeatId, action: PlaceAction, source: DecisionSource): GomokuState {
+export function applyMove(state: GomokuState, seatId: SeatId, action: PlaceAction, source: DecisionSource, metadata: Partial<Pick<MoveRecord, 'controller' | 'seatMoveIndex' | 'engineSuggestion' | 'thoughtCardVersion' | 'deviationReport' | 'note' | 'wakeDeliveredAt' | 'budgetMs' | 'extended'>> = {}): GomokuState {
   if (state.status !== 'playing') throw new RuleError('GAME_FINISHED', 'The game has already finished.');
   if (state.nextSeat !== seatId) throw new RuleError('NOT_YOUR_TURN', 'This seat cannot move now.');
   const { row, col } = action;
@@ -113,7 +144,9 @@ export function applyMove(state: GomokuState, seatId: SeatId, action: PlaceActio
   const full = !won && board.every((cell) => cell !== 0);
   const nextSeat = won || full ? null : seatId === 'human' ? 'companion' : 'human';
   const now = new Date().toISOString();
-  const move: MoveRecord = { row, col, seatId, stone, source, version, at: now };
+  const seatMoveIndex = state.history.filter((item) => item.seatId === seatId).length + 1;
+  const ownMoveIndex = state.history.filter((item) => item.seatId === 'companion').length + (seatId === 'companion' ? 1 : 0);
+  const move: MoveRecord = { row, col, seatId, stone, source, seatMoveIndex, ownMoveIndex, engineSuggestion: metadata.engineSuggestion ?? null, controller: metadata.controller ?? (seatId === 'human' ? 'human' : source === 'local' || source === 'fallback' ? 'engine' : 'body'), thoughtCardVersion: metadata.thoughtCardVersion ?? null, deviationReport: metadata.deviationReport ?? null, note: metadata.note ?? null, wakeDeliveredAt: metadata.wakeDeliveredAt || state.updatedAt, budgetMs: metadata.budgetMs ?? null, extended: metadata.extended ?? false, version, at: now };
   return {
     ...state,
     board,
@@ -196,11 +229,80 @@ export function hasImmediateWinningMove(state: GomokuState, seatId: SeatId): boo
   });
 }
 
+const AXES: Position[] = [{ row: 1, col: 0 }, { row: 0, col: 1 }, { row: 1, col: 1 }, { row: 1, col: -1 }];
+
+function shapeOnAxis(board: Stone[], row: number, col: number, stone: Stone, axis: Position): { run: number; open: number } {
+  const run = 1 + countRay(board, row, col, axis.row, axis.col, stone) + countRay(board, row, col, -axis.row, -axis.col, stone);
+  let open = 0;
+  for (const sign of [-1, 1]) {
+    const ray = countRay(board, row, col, sign * axis.row, sign * axis.col, stone);
+    const r = row + sign * axis.row * (1 + ray);
+    const c = col + sign * axis.col * (1 + ray);
+    if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && board[indexOf(r, c)] === 0) open++;
+  }
+  return { run, open };
+}
+
+/** Uses the same contiguous-run/open-end definition as directionPotential: open 4 =活四, one-ended 4 =冲四. */
+export function tacticalShapesAtLastMove(state: GomokuState): string[] {
+  const last = state.history.at(-1);
+  if (!last) return [];
+  const shapes = AXES.map((axis) => shapeOnAxis(state.board, last.row, last.col, last.stone, axis));
+  const fours = shapes.filter((shape) => shape.run === 4 && shape.open > 0).length;
+  const openFours = shapes.filter((shape) => shape.run === 4 && shape.open === 2).length;
+  const openThrees = shapes.filter((shape) => shape.run === 3 && shape.open === 2).length;
+  const labels: string[] = [];
+  if (shapes.some((shape) => shape.run === 3 && shape.open === 2)) labels.push('活三');
+  if (shapes.some((shape) => shape.run === 3 && shape.open === 1)) labels.push('眠三');
+  if (shapes.some((shape) => shape.run === 4 && shape.open === 2)) labels.push('活四');
+  if (shapes.some((shape) => shape.run === 4 && shape.open === 1)) labels.push('冲四');
+  if (openFours > 0) labels.push('双活四');
+  if (fours >= 2) labels.push('双四');
+  if (fours > 0 && openThrees > 0) labels.push('四三');
+  if (openThrees >= 2) labels.push('双三');
+  const winningPoints = (stone: Stone) => {
+    let count = 0;
+    for (let row = 0; row < BOARD_SIZE; row++) for (let col = 0; col < BOARD_SIZE; col++) {
+      const at = indexOf(row, col);
+      if (state.board[at] !== 0) continue;
+      const board = state.board.slice();
+      board[at] = stone;
+      if (hasFive(board, row, col, stone) && ++count >= 2) return count;
+    }
+    return count;
+  };
+  if (winningPoints(last.stone) >= 2) labels.push('双点必杀');
+  return [...new Set(labels)];
+}
+
+export function forcedWakeReason(state: GomokuState): string | null {
+  const labels = tacticalShapesAtLastMove(state);
+  if (labels.includes('活四')) return '形成活四';
+  if (labels.includes('双四')) return '形成双四';
+  if (labels.includes('四三')) return '形成四三';
+  if (labels.includes('双三')) return '形成双三';
+  if (labels.includes('双点必杀')) return '出现双点必杀';
+  if (state.nextSeat === 'companion' && hasImmediateWinningMove(state, 'companion')) return '本方胜负手';
+  return null;
+}
+
 export function criticalTurnReason(state: GomokuState, seatId: SeatId): string | null {
   const other: SeatId = seatId === 'human' ? 'companion' : 'human';
   if (hasImmediateWinningMove(state, seatId)) return '自身有一步制胜机会';
   if (hasImmediateWinningMove(state, other)) return '需要应对对手的一步制胜威胁';
   return null;
+}
+
+/** Call the model only when the position has multiple similarly strong tactical routes.
+ * Immediate wins and forced blocks are deterministic and stay with the local bot.
+ */
+export function decisionOpportunityReason(state: GomokuState, seatId: SeatId): string | null {
+  const other: SeatId = seatId === 'human' ? 'companion' : 'human';
+  if (hasImmediateWinningMove(state, seatId) || hasImmediateWinningMove(state, other)) return null;
+  const [best, runnerUp] = rankLocalMoves(state, seatId, 2);
+  if (!best || !runnerUp || best.score < 150_000 || runnerUp.score < 150_000) return null;
+  if (runnerUp.score / best.score < 0.9) return null;
+  return '存在多条强战术路线，适合由你选择进攻方向';
 }
 
 export function chooseLocalMove(state: GomokuState, seatId: SeatId): Position | null {

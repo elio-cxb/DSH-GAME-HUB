@@ -71,10 +71,13 @@ test('HTTP auth, idempotency, game-only token usage, WebSocket auth, and restart
   const created = await createdResponse.json();
   assert.match(created.token, /^[A-Za-z0-9_-]{40,}$/);
   const { gameId, token } = created;
+  const spectatorToken = created.spectatorToken;
+  assert.match(spectatorToken, /^[A-Za-z0-9_-]{40,}$/);
   assert.equal((await fetch(base + `/api/games/${gameId}/status`)).status, 401);
   assert.equal((await fetch(base + `/api/games/${gameId}/status?token=${token}`)).status, 401, 'token in URL is not accepted');
   assert.equal((await fetch(base + `/api/games/${gameId}/status`, { headers: auth('x'.repeat(48)) })).status, 401);
   assert.equal((await fetch(base + `/api/games/${gameId}/status`, { headers: auth(token) })).status, 200);
+  assert.equal((await fetch(base + `/api/games/${gameId}/status`, { headers: auth(spectatorToken) })).status, 200, 'read-only spectator token can inspect status');
 
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
   t.after(() => ws.readyState === WebSocket.CLOSED ? undefined : ws.close());
@@ -89,13 +92,16 @@ test('HTTP auth, idempotency, game-only token usage, WebSocket auth, and restart
   assert.equal(wsData.observation.seatId, 'human');
 
   const firstView = await (await fetch(base + `/api/games/${gameId}/view`, { headers: auth(token) })).json();
-  const action = { requestId: 'request_move_0001', expectedVersion: firstView.observation.version, action: { type: 'place', row: 7, col: 7 } };
+  const empty = firstView.observation.legalActions[0];
+  const action = { requestId: 'request_move_0001', expectedVersion: firstView.observation.version, action: { type: 'place', row: empty.row, col: empty.col } };
   const submit = () => fetch(base + `/api/games/${gameId}/actions`, { method: 'POST', headers: { ...auth(token), 'content-type': 'application/json' }, body: JSON.stringify(action) });
   const first = await submit();
   assert.equal(first.status, 200);
   const firstResult = await first.json();
-  assert.equal(firstResult.observation.history.length, 2, 'human move and companion response persisted atomically');
-  assert.equal(firstResult.observation.history.at(-1).source, 'mock');
+  assert.ok(firstResult.observation.history.length >= 2, 'human move and companion response persisted atomically');
+  assert.equal(firstResult.observation.history.at(-1).source, 'local');
+  const spectatorWrite = await fetch(base + `/api/games/${gameId}/actions`, { method: 'POST', headers: { ...auth(spectatorToken), 'content-type': 'application/json' }, body: JSON.stringify(action) });
+  assert.equal(spectatorWrite.status, 403, 'spectator token cannot submit moves');
   const replay = await submit();
   assert.equal(replay.status, 200);
   assert.equal((await replay.json()).replayed, true);
@@ -111,7 +117,7 @@ test('HTTP auth, idempotency, game-only token usage, WebSocket auth, and restart
   const usageSummary = await (await fetch(base + `/api/games/${gameId}/usage`, { headers: auth(token) })).json();
   assert.deepEqual({ requests: usageSummary.requests, inputTokens: usageSummary.inputTokens, outputTokens: usageSummary.outputTokens, totalTokens: usageSummary.totalTokens }, { requests: 1, inputTokens: 120, outputTokens: 30, totalTokens: 150 });
 
-  const badMove = await fetch(base + `/api/games/${gameId}/actions`, { method: 'POST', headers: { ...auth(token), 'content-type': 'application/json' }, body: JSON.stringify({ requestId: 'request_bad_move', expectedVersion: firstResult.observation.version, action: { type: 'place', row: 7, col: 7 } }) });
+  const badMove = await fetch(base + `/api/games/${gameId}/actions`, { method: 'POST', headers: { ...auth(token), 'content-type': 'application/json' }, body: JSON.stringify({ requestId: 'request_bad_move', expectedVersion: firstResult.observation.version, action: { type: 'place', row: empty.row, col: empty.col } }) });
   assert.equal(badMove.status, 422);
 
   await stop(child);

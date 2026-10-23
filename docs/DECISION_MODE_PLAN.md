@@ -138,7 +138,7 @@ Content-Type: application/json
 - 只在 `shouldEscalateToLLM` 判真时回调；其余回合零模型调用。
 - 回调体最小（只有 gameId/gameType）；视图由 `game_view` 拉取，只含本席可见信息 + 最近 2 手 + 合法动作 Top K，压缩到 ≤900 token。
 - 一个关键回合只允许一轮内 `view → play`：禁止停顿等待、二次确认、解释性小作文、多轮追问。
-- `game_status` 只在使用者 QQ 明确询问时调用，返回 ≤80 token 摘要；不轮询、不主动推送。
+- `game_status` 只在主人 QQ 明确询问时调用，返回 ≤80 token 摘要；不轮询、不主动推送。
 - 每次模型调用记录来源标签：`chat` / `game-keyturn`，供 `usage-cli` 分别统计。
 
 ---

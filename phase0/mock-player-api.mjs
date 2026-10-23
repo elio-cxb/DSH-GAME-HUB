@@ -44,7 +44,7 @@ function createMockServer() {
         state: 'active',
         phase: internal.phase,
         turnNumber: internal.publicState.turnNumber,
-        activePlayer: 'DSH',
+        activePlayer: '小鲸鱼',
         decisionSource: 'local',
         lastAction: '托管完成了最近一步',
       });

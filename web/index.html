@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>DSH · 五子棋</title><link rel="stylesheet" href="/styles.css"><script type="module" src="/app.js"></script></head>
+<body><main class="shell">
+  <header class="topbar"><div><p class="eyebrow">DSH GAME HUB</p><h1>五子棋</h1><p class="subtitle">来下一局吧。</p></div><button id="new-game" class="primary">新建对局</button></header>
+  <section class="layout"><section class="board-card" aria-label="五子棋棋盘"><div id="board" class="board" role="grid" aria-label="15乘15棋盘"><svg class="grid-lines" viewBox="0 0 15 15" preserveAspectRatio="none" aria-hidden="true"><defs><pattern id="board-grid" width="1" height="1" patternUnits="userSpaceOnUse"><path d="M .5 0 V1 M 0 .5 H1" fill="none" stroke="#c6a477" stroke-opacity=".55" stroke-width=".025" /></pattern></defs><rect width="15" height="15" fill="url(#board-grid)" /></svg></div></section>
+    <aside class="panel"><div id="mode-badge" class="badge">尚未开始</div><h2 id="headline">准备好开始了吗？</h2><p id="message" class="message">新建对局后，点击棋盘落子。</p>
+      <dl class="details"><div><dt>当前回合</dt><dd id="turn">—</dd></div><div><dt>你的棋子</dt><dd id="stone-color">—</dd></div><div><dt>对局版本</dt><dd id="version">—</dd></div><div><dt>连接状态</dt><dd id="connection">离线</dd></div></dl>
+      <section class="usage-card" aria-labelledby="usage-title"><h3 id="usage-title">游戏 Token 用量</h3><dl class="usage-details"><div><dt>本项目累计</dt><dd><span id="project-token-count">0</span> tokens</dd></div><div><dt>本局</dt><dd><span id="game-token-count">0</span> tokens</dd></div><div><dt>模型请求</dt><dd><span id="project-request-count">0</span> 次 / 本局 <span id="game-request-count">0</span> 次</dd></div></dl><p class="note">只统计游戏模型调用，不含 QQ 聊天。</p></section><button id="history-open" class="secondary" disabled>走子记录</button><button id="resume" class="link-button">恢复已保存对局</button>
+      <p class="note">对局进度独立保存，刷新页面后可以恢复。</p>
+    </aside></section>
+</main>
+<dialog id="history-dialog" aria-labelledby="history-title"><div class="dialog-head"><div><p class="eyebrow">本局记录</p><h2 id="history-title">走子记录</h2></div><button id="history-close" class="close-button" aria-label="关闭">×</button></div><p id="history-summary" class="dialog-summary">尚无走子记录</p><ol id="history" class="history"></ol><p class="note">来源按实际执行记录显示；测试模拟不代表真实模型调用。</p></dialog>
+</body></html>
+
+

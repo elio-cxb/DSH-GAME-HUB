@@ -1,0 +1,17 @@
+{
+  "name": "dsh-game-hub",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --experimental-strip-types src/server.ts",
+    "start:worker": "node --env-file-if-exists=.env --experimental-strip-types src/decision-worker.ts",
+    "dev": "node --watch --env-file-if-exists=.env --experimental-strip-types src/server.ts",
+    "test": "node --experimental-strip-types --test",
+    "usage": "node src/usage-cli.mjs",
+    "check": "node --experimental-strip-types --check src/server.ts && node --experimental-strip-types --check src/decision-worker.ts && node --experimental-strip-types --check src/store.ts && node --experimental-strip-types --check src/games/gomoku.ts && node --check web/app.js"
+  },
+  "dependencies": { "ws": "8.22.0" }
+}
